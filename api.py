@@ -121,9 +121,9 @@ def login():
         return make_response('User not found', 401, {'WWW-Authenticate': 'Basic realm="Login required"!'})
 
     if check_password_hash(user.password, auth.password):
-        print(auth.password)
+
         token = jwt.encode({'public_id': user.public_id, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)}, key=app.config['SECRET_KEY'])
-        print(token)
+
         return jsonify({'token': token.decode('UTF-8')})
 
     return make_response('Password incorrect', 401, {'WWW-Authenticate': 'Basic realm="Login required"!'})
