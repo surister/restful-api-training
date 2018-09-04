@@ -1,10 +1,11 @@
-from flask import Flask, request, jsonify, make_response
-from flask_sqlalchemy import SQLAlchemy
-
 import datetime
-import uuid
+
 import jwt
 
+import uuid
+
+from flask import Flask, request, jsonify, make_response
+from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
@@ -13,6 +14,26 @@ app.config['SECRET_KEY'] = '1234'
 app.config['SQLALCHEMY_DATABASE_URI'] = r'sqlite:///database.db'
 
 db = SQLAlchemy(app)
+
+
+def deco(f):
+    def wrapper(*args, **kwargs):
+        token = None
+        if 'access_token' in request.headers:
+            token = request.headers['access_token']
+        if not token:
+            return jsonify({'message': 'Token is missing'})
+
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'])
+            current_user = User.query.filter_by(public_id=data['public_id']).first()
+        except:
+
+            return jsonify({'message': 'token is invalid'})
+
+        return f(current_user, *args, **kwargs)
+
+    return wrapper
 
 
 class User(db.Model):
@@ -40,8 +61,24 @@ def home(something):
     return f' This is {something}'
 
 
+@app.route('/user', methods=['POST'])
+def create_user():
+    data = request.get_json()
+    if 'name' not in data.keys() or 'password' not in data.keys():
+        return jsonify({'You have to use this model:': '{"user": "username", "password": "chosenpassword"}'})
+    if data['name'] == '' or data['password'] == '':
+        return jsonify({'Error': ' You cannot have empty values'})
+
+    hashed_password = generate_password_hash(data['password'], method='sha256')
+    new_user = User(public_id=str(uuid.uuid4()), name=data['name'], password=hashed_password, admin=False)
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({'message': 'New user created!'})
+
+
 @app.route('/user', methods=['GET'])
-def get_all_users():
+@deco
+def get_all_users(current_user):
 
     users = User.query.all()
 
@@ -59,27 +96,15 @@ def get_one_user(public_id):
 
     if not user:
         return jsonify({'Error': 'No user found!'})
-
+    print(data)
     if data['key'] == 123:
-        user_list = dict(id=user.id, public_id=user.public_id, name=user.name, password=user.password, admin_bool=user.admin)
+        user_list = dict(id=user.id, public_id=user.public_id, name=user.name, password=user.password,
+                         admin_bool=user.admin)
         return jsonify({'user': user_list})
 
     user_list = dict(public_id=user.public_id, name=user.name, password=user.password, admin_bool=user.admin)
 
     return jsonify({'User': user_list})
-
-
-@app.route('/user', methods=['POST'])
-def create_user():
-    data = request.get_json()
-    if 'name' not in data.keys() or 'password' not in data.keys():
-        return jsonify({'You have to use this model:': '{"user": "username", "password": "chosenpassword"}'})
-
-    hashed_password = generate_password_hash(data['password'], method='sha256')
-    new_user = User(public_id=str(uuid.uuid4()), name=data['name'], password=hashed_password, admin=False)
-    db.session.add(new_user)
-    db.session.commit()
-    return jsonify({'message': 'New user created!'})
 
 
 @app.route('/user/<public_id>', methods=['PUT'])
@@ -112,7 +137,7 @@ def delete_user(public_id):
 def login():
     auth = request.authorization
 
-    if not auth or not auth.username or not auth.username:
+    if not auth or not auth.username or not auth.password:
         return make_response('Could not verify', 401, {'WWW-Authenticate': 'Basic realm="Login required"!'})
 
     user = User.query.filter_by(name=auth.username).first()
@@ -122,7 +147,8 @@ def login():
 
     if check_password_hash(user.password, auth.password):
 
-        token = jwt.encode({'public_id': user.public_id, 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=30)}, key=app.config['SECRET_KEY'])
+        token = jwt.encode({'public_id': user.public_id, 'exp': datetime.datetime.utcnow()
+                            + datetime.timedelta(minutes=30)}, key=app.config['SECRET_KEY'])
 
         return jsonify({'token': token.decode('UTF-8')})
 
